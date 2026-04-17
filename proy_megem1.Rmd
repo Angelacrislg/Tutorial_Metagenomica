@@ -1,0 +1,793 @@
+---
+title: "Reporte de metagenomica"
+author: "Angela Luque Garcia"
+date: "2025-04-04"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(tibble)  
+library(pheatmap)
+```
+
+# Introduccion:
+
+El presente estudio se centra en el análisis detallado de la microbiota intestinal de 23 ratones, con el objetivo de comparar los grupos experimentales definidos por las combinaciones de sexo (macho/hembra) y genotipo (KO/WT). La microbiota intestinal juega un papel crucial en la salud del huésped, influyendo en procesos metabólicos, inmunológicos y neurológicos. Por lo tanto, comprender las diferencias en la composición y función de la microbiota entre estos grupos experimentales es fundamental para evaluar el impacto de las variables estudiadas.
+
+Para llevar a cabo este análisis, se utilizaron datos metagenómicos obtenidos mediante la secuenciación de la región 16S rRNA de muestras fecales. Se implementó un enfoque bioinformático estructurado, empleando herramientas especializadas como Mothur, LEfSe, MaAsLin2 y PICRUSt2. Estas herramientas permiten una caracterización exhaustiva de la microbiota intestinal, desde la clasificación taxonómica hasta la predicción de funciones metabólicas.
+
+# Metodologia:
+
+# Anlisis de datos en mothur
+
+## 1. Filtrado y Preprocesamiento de Secuencias
+
+Para el análisis de datos en Mothur, se descargaron los archivos de meta_16seq junto con las referencias genómicas v132 y v138 de la base de datos SILVA. El objetivo fue generar un archivo FASTA que contenga la región 16S del rRNA de E. coli, utilizando los cebadores de interés para amplificar los fragmentos específicos. Una vez obtenido el fasta personalizamos la base de dato Silva, para alinearse con las regiones hipervariables de interés (V3-V4). Para este procedimiento se usó la herramienta pcr.seqs de mothur que recorta las bases de datos en las regiones de interés antes señaladas en el articulo de referencia.
+
+```         
+pcr.seqs(fasta=/home/mjgommo/DATABASES/SILVA_SEED_132/silva.seed_v132.align, start=6388, end=25316, keepdots=FALSE).
+```
+
+Los reultados resultantes de este porceso de ven evidenciados en la siguiente grafica con las características de las secuencias obtenida. Esta tabla indica la posicion inicial y final de las lecturas, el numero total de bases en la secuencia y el numero de secuensias iniciales obtenidas.
+
+```         
+        Start   End NBases  Ambigs  Polymer NumSeqs
+Minimum:    1   303 303 0   3   1
+2.5%-tile:  1   440 440 0   3   37083
+25%-tile:   1   458 458 0   5   370828
+Median:     1   460 460 0   5   741656
+75%-tile:   1   465 465 0   6   1112483
+97.5%-tile: 1   465 465 8   6   1446228
+Maximum:    1   602 602 108 301 1483310
+Mean:       1   459 459 0   5
+# of unique seqs:   1483310
+total # of seqs:    1483310
+```
+
+Una vez obtenido el archivo FASTA con el que se trabajará, se procede a la etapa de filtrado de calidad utilizando la herramienta screen.seqs. Este paso permite eliminar secuencias que no cumplen con criterios de calidad previamente definidos.
+
+Para nuestro análisis, aplicamos los siguientes filtros: • Eliminación de bases ambiguas (maxambig=0).
+
+•Selección de secuencias con una longitud mínima de 400 bases y máxima de 500 bases (minlength=400, maxlength=500).
+
+• Remoción de secuencias con homopolímeros excesivos (maxhomop=8).
+
+Tras aplicar estos filtros, obtenemos como resultado el archivo de salida:
+
+```         
+    META_16.trim.contigs.good.fasta
+```
+
+El resultado de documento obtenido se evidencia en la siguiente tabla\
+A continuación, realizamos un proceso de reducción de redundancia utilizando la herramienta unique.seqs, que agrupa secuencias idénticas y conserva únicamente las secuencias únicas. Este procedimiento optimiza el almacenamiento y mejora el rendimiento en los análisis de clustering y OTUs. El archivo de salida generado es:
+
+```         
+  META_16.trim.contigs.good.unique.fasta
+```
+
+Tras aplicar estos filtros, obtenemos como resultado el archivo de salida donde se evidencia la disminución en el número de secuencias analizadas después de aplicar filtros es un resultado esperado y positivo, ya que indica que se han eliminado las secuencias de baja calidad y el ruido, lo que mejora la calidad de los resultados.:
+
+```         
+    Start   End NBases  Ambigs  Polymer NumSeqs
+Minimum:    1   1169    412 0   3   1
+2.5%-tile:  1   1169    440 0   4   29632
+25%-tile:   1   1169    458 0   5   296317
+Median:     1   1169    460 0   6   592634
+75%-tile:   1   1169    465 0   6   888951
+97.5%-tile: 1   1169    465 0   6   1155636
+Maximum:    1   1169    496 0   8   1185267
+Mean:       1   1169    459 0   5
+# of unique seqs:   403047
+total # of seqs:    1185267
+```
+
+## 2. Alineamiento y Preclustering.
+
+Con el archivo FASTA filtrado y amplificado en las regiones de interés, alineamos las secuencias contra la base de datos de referencia Silva. Luego, realizamos un preclustering con la herramienta *pre.cluster*, que agrupa secuencias similares con una diferencia máxima de 4 bases. Este paso es crucial para reducir la cantidad de secuencias únicas y minimizar el ruido en los datos sin afectar la diversidad microbiana.
+
+Al ejecutar el comando, Mothur genera el mensaje “Splitting by sample”, lo que indica que el software divide las secuencias por muestra y las procesa de forma independiente. Este procedimiento asegura que el preclustering respete la estructura original de las muestras, evitando la mezcla de datos entre ellas.
+
+## 3.Eliminacion de Quimeras. Las secuencias obtenidas tras el preclustering se someten a una detección y eliminación de quimeras, que pueden haberse generado durante la PCR. Para ello, utilizamos la herramienta *chimera.vsearch*, que identifica y remueve secuencias quiméricas de manera eficiente.
+
+Alternativamente, este procedimiento puede realizarse con *chimera.uchime*, una herramienta más lenta pero menos estricta en la detección de quimeras.
+
+El archivo de salida tras la eliminación de quimeras:
+
+```         
+   META_16.trim.contigs.good.unique.precluster.pick.fasta
+```
+
+## 3. Clasificación Taxonómica y Normalización
+
+Finalizados los procesos de filtrado y eliminación de secuencias no deseadas, obtenemos un archivo FASTA optimizado y listo para ser sometido a clasificación taxonómica. Para ello, utilizamos la base de datos de referencia Silva personalizada, previamente recortada en las regiones V3-V4.
+
+Antes de la clasificación, realizamos una eliminación de grupos taxonómicos indeseados con la herramienta remove.lineage, eliminando contaminantes como cloroplastos,mitocondrias,eucariotas,arqueas,taxones desconocidos.
+
+Por último, aplicamos un proceso de normalización para estandarizar el número de lecturas por muestra, garantizando comparaciones equitativas en los análisis posteriores. El archivo de salida tras normalización:
+
+```         
+   META_16.trim.contigs.good.unique.precluster.pick.taxonomy
+```
+
+## 4.Generacion de OTUs.
+
+Las Unidades Taxonómicas Operativas (OTUs) son grupos de secuencias con alto grado de similitud que permiten la clasificación de organismos en estudios de microbiomas, especialmente cuando no se dispone de una taxonomía completamente definida. Generalmente, la agrupación de OTUs se realiza con un umbral de identidad del 97% o superior, lo que indica que las secuencias dentro de un mismo OTU probablemente pertenecen a la misma especie o a un grupo filogenéticamente cercano.
+
+En Mothur, la generación de OTUs se lleva a cabo mediante la herramienta *classify.otu*, que permite agrupar las secuencias y asignarles una clasificación taxonómica.
+
+Los parámetros clave para este proceso incluyen: • Nivel de agrupamiento: Se define un umbral del 3% de diferencia (label=0.03), lo que equivale a un 97% de identidad entre secuencias. • Abundancia: Se puede reportar la abundancia relativa o absoluta de cada OTU en la muestra.
+
+El comando utilizado en Mothur es el siguiente:
+
+```         
+classify.otu(list=final.opti_mcc.list, count=final.count_table, 
+taxonomy=final.taxonomy, label=0.03, basis=sequence, relabund=FALSE, output=simple, printlevel=6)
+```
+
+Este proceso genera dos archivos de salida: 1. Archivo de clasificación taxonómica, que asigna cada OTU a un posible taxón. 2. Tabla de abundancia de OTUs, que muestra la cantidad de secuencias agrupadas en cada unidad taxonómica.
+
+### 4.2. Análisis de OTUs.
+
+Para analizar las OTUs (Unidades Taxonómicas Operativas) en Mothur, se genera un archivo utilizando la herramienta *make.shared*, el cual contiene el número de secuencias asignadas a cada OTU en cada muestra. El archivo de salida resultante es:
+
+```         
+•   final.opti_mcc.shared → Contiene la matriz de abundancia de OTUs por muestra.
+```
+
+A continuación, se realiza un conteo de grupos con la herramienta count.groups, cuyo propósito es mostrar el número total de secuencias en cada muestra. Esto permite identificar la muestra con el menor número de secuencias para llevar a cabo un submuestreo (subsampling).
+
+El subsampling se realiza con el comando *sub.sample*, el cual estandariza las muestras reduciéndolas al tamaño de la muestra más pequeña. Este paso es fundamental para evitar sesgos en el análisis de diversidad.
+
+Finalmente, se obtiene la información necesaria para evaluar la riqueza de las OTUs utilizando la herramienta *rarefaction.single*. Este procedimiento genera datos para la construcción de una curva de rarefacción, que permite estimar la riqueza de OTUs en función del número de secuencias analizadas.
+
+Este análisis es clave para evaluar la diversidad microbiana y garantizar que la profundidad de muestreo sea suficiente para capturar la variabilidad de la comunidad.
+
+```{r}
+path_otu = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_OTU/final.opti_mcc.groups.rarefaction"
+path_pylotipe ="/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.groups.rarefaction" 
+
+rareedata_OTU <- read.delim(path_otu,row.names = 1)
+rareedata_phylotipe <- read.delim(path_pylotipe,row.names = 1)
+
+raredata_OTU<- rareedata_OTU[,grep("ci",names(rareedata_OTU), value = TRUE, invert = TRUE)]
+raredata_phylotipe<- rareedata_phylotipe[,grep("ci",names(rareedata_phylotipe), value = TRUE, invert = TRUE)]
+        
+matplot(as.matrix(raredata_OTU),type = "l")
+
+```
+
+### 4.3. Cálculo de Índices de Diversidad y Análisis de Similitud.
+
+Para evaluar la diversidad dentro de las muestras, se calcularon índices de diversidad alfa utilizando el número de secuencias y el número de OTUs observadas.
+
+Los índices empleados fueron: • Índice de Simpson: Considera la dominancia de ciertas especies dentro de la comunidad. • Índice de Shannon: Evalúa la riqueza y equidad de la comunidad microbiana.
+
+El resultado de este cálculo se almacena en el archivo: • final.opti_mcc.groups.ave-std.summary → Contiene los valores promedio y la desviación estándar de los índices de diversidad.
+
+Para analizar la similitud entre las OTUs de distintas muestras, se generaron matrices de distancia utilizando la herramienta dist.shared. Se calcularon dos métricas clave: 1. Bray-Curtis: Basado en la abundancia relativa de las OTUs. 2. Jaccard (jClass): Basado en la presencia/ausencia de OTUs.
+
+```         
+dist.shared(shared=final.opti_mcc.shared, calc=braycurtis-jclass, subsample=T)
+```
+
+Los archivos de salida generados son: • final.opti_mcc.braycurtis.0.03.lt.ave.dist → Distancias promedio según Bray-Curtis. • final.opti_mcc.jclass.0.03.lt.ave.dist → Distancias promedio según Jaccard.
+
+```{r}
+path_alpha_OTUS = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_OTU/final.opti_mcc.groups.ave-std.summary"
+desvi_OTUS <- read.delim(path_alpha_OTUS)
+path_target = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_SEQS/Targets.file.txt"
+
+target <- read.delim(path_target)
+
+
+```
+
+```{r}
+desvi_OTUS_2 <- desvi_OTUS %>% left_join(target,by="group")
+ave_OTUS <- desvi_OTUS_2 %>% filter(method == "ave")
+
+head(ave_OTUS)
+
+```
+
+```{r}
+metricas <- c("shannon", "invsimpson", "sobs")  # Reemplaza con tus nombres de columnas
+par(mfrow = c(1, length(metricas)))  # 1 fila, tantas columnas como métricas
+
+# Loop para generar los boxplots
+for (metrica in metricas) {
+  boxplot(
+    ave_OTUS[[metrica]] ~ ave_OTUS$treatment, 
+    main = paste("Boxplot de", metrica, "por Grupo"),
+    xlab = "Grupo", 
+    ylab = metrica, 
+    col = c("lightblue", "lightgreen", "lightpink"),
+    border = "darkblue"
+  )
+}
+
+```
+
+
+### 4.4.Análisis de Variación y Asociación
+
+Para visualizar la variación entre muestras, se realizó un Análisis de Componentes Principales (PCoA) basado en las matrices de distancia obtenidas.
+
+Además, se aplicó la prueba AMOVA (Analysis of Molecular Variance) para evaluar si las diferencias entre los grupos definidos en el diseño experimental son estadísticamente significativas.
+
+```         
+amova(phylip=final.opti_mcc.braycurtis.0.03.lt.ave.dist, design=../META_16_SEQS/Targets.file.txt)
+```
+
+Para asociar los ejes principales del PCoA con la abundancia de las OTUs, se utilizó la herramienta corr.axes, la cual calcula correlaciones de Spearman entre los ejes principales y las OTUs.
+
+```         
+corr.axes(axes=final.opti_mcc.braycurtis.0.03.lt.ave.pcoa.axes, shared=final.opti_mcc.0.03.subsample.shared, label=0.03, method=spearman, numaxes=3)
+```
+
+Finalmente, se realizó un análisis de abundancia diferencial utilizando LEfSe (Linear Discriminant Analysis Effect Size), con el objetivo de identificar las OTUs que presentan diferencias significativas entre los grupos definidos en el diseño experimental.
+
+## 5.Análisis de Phylotipos
+
+El análisis de phylotipos agrupa las secuencias en función de su clasificación taxonómica en lugar de la distancia genética entre ellas. En Mothur, este análisis se realiza con la herramienta *phylotype*, donde las secuencias se agrupan a nivel de género.
+
+```         
+mothur > phylotype(taxonomy=final.taxonomy, label=1)
+```
+
+Los archivos generados en esta etapa son: • final.tx.sabund: Abundancia por phylotipo. • final.tx.rabund: Abundancia relativa por phylotipo. • final.tx.list: Listado de secuencias asignadas a cada phylotipo.
+
+Para la correcta clasificación taxonómica, se utiliza la herramienta classify.otu, que asigna una taxonomía consensuada a cada phylotipo y reporta las abundancias absolutas (relabund=FALSE) y relativas (relabund=TRUE), detallando la taxonomía a nivel de género (printlevel=6).
+
+```         
+mothur > classify.otu(list=final.tx.list, count=final.count_table, taxonomy=final.taxonomy, label=1, basis=sequence, relabund=TRUE, output=simple, printlevel=6)
+```
+
+### 5.2 Nornalización y análisis de diversidad.
+
+Al igual que en el análisis de OTUs, se genera un archivo make.shared con el número de secuencias en cada phylotipo para cada muestra. Luego, con count.groups se obtiene el número total de secuencias por muestra. Finalmente, se realiza una estandarización de los datos con sub.sample, reduciendo todas las muestras al tamaño de la muestra más pequeña.
+
+Para evaluar la riqueza de los phylotipos, se generan curvas de rarefacción con la herramienta rarefaction.single:
+
+```         
+mothur > rarefaction.single(shared=final.tx.shared, calc=sobs, freq=100)
+```
+
+La curva de rarefaccion resultante tiende a nivelar se en forma de meseta por lo que el muestre fue sufucuente para capturar la mayoria de los phulotipos presentes en cada muestras.
+
+```{r}
+matplot(as.matrix(raredata_phylotipe),type = "l")
+```
+
+Fig.1.2: cuva de rarefaccion en el analisis de phylotipos.
+
+El cálculo de la *diversidad alfa* se realiza con la herramienta *summary.single*, utilizando el índice de Shannon, que mide la riqueza y equidad, y el índice de Simpson, que considera la dominancia:
+
+```         
+mothur > summary.single(shared=final.tx.shared, calc=nseqs-coverage-sobs-invsimpson-shannon, subsample=T)
+```
+
+```{r}
+path_alpha = "/Users/angelaluquegarcia/documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.groups.ave-std.summary"
+path_target = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_SEQS/Targets.file.txt"
+
+desvi_phylotype <- read.delim(path_alpha)
+target <- read.delim(path_target)
+
+```
+
+```{r}
+desvi_phylotype_2 <- desvi_phylotype %>% left_join(target,by="group")
+ave_phylotype <- desvi_phylotype_2 %>% filter(method == "ave")
+
+ave_phylotype
+
+```
+
+Este boxplot muestra la distribución del índice de Shannon para cada grupo (KO_F, KO_M, WT_F, WT_M), lo que permite analizar la diversidad alfa de las comunidades microbianas o ecológicas en cada condición. Aquí hay algunas conclusiones clave:
+
+1.  Comparación de la diversidad entre grupos • WT_F (rosa) tiene la mayor diversidad, con valores de Shannon más altos en comparación con los otros grupos. Esto sugiere que la comunidad microbiana en este grupo es más diversa. • KO_M (verde) tiene la menor diversidad, con valores más bajos y un rango pequeño, lo que indica menor variabilidad dentro del grupo. • KO_F (azul claro) muestra una diversidad intermedia con una distribución más amplia, lo que sugiere mayor variabilidad dentro del grupo. • WT_M (azul oscuro) tiene valores de Shannon relativamente bajos y una dispersión pequeña, lo que indica una comunidad menos diversa y homogénea.
+
+por ultimo se puede identificar una mayor disperción en los valores de Shannon para los grupos KO_F y WT_F que sugieren una mayor variabilidad entre los grupos. Igualmente para el grupo KO_M y WT_M se evidencias rangos mas estrechos, lo que sugiere una similitud entre las muestras.
+
+```{r}
+boxplot(shannon ~ treatment, data = ave_phylotype,
+        main = "Boxplot de Shannon por Grupo",
+        xlab = "Grupo", ylab = "Shannon",
+        col = c("lightblue", "lightgreen", "lightpink"),
+        border = "darkblue")
+
+```
+
+Si visualizamos la desviacion con las otras metricas usadas, tambein podemos conluir que segun el inverso de Simpson el grupo WT_F tiene una comunidad más equilibrada en términos de abundancia relativa de especies, mientras que KO_M tiene menos equitabilidad (posiblemente dominada por unas pocas especies) y con las metricas de sobs podems identificar la riqueza de especies donde WT_F tiene la mayor cantidad de especies detectadas, lo que podría estar relacionado con su mayor diversidad en los otros índices.
+
+```{r}
+metricas <- c("shannon", "invsimpson", "sobs")  # Reemplaza con tus nombres de columnas
+
+# Dividir el área gráfica en filas y columnas según la cantidad de métricas
+par(mfrow = c(1, length(metricas)))  # 1 fila, tantas columnas como métricas
+
+# Loop para generar los boxplots
+for (metrica in metricas) {
+  boxplot(
+    ave_phylotype[[metrica]] ~ ave_phylotype$treatment, 
+    main = paste("Boxplot de", metrica, "por Grupo"),
+    xlab = "Grupo", 
+    ylab = metrica, 
+    col = c("lightblue", "lightgreen", "lightpink"),
+    border = "darkblue"
+  )
+}
+```
+
+El analisis de diversidad beta de realiza para evaluar la similitud entre muestras, se generan matrices de distancia con dist.shared utilizando dos métodos: • Bray-Curtis, que considera la composición y abundancia. • Jaccard (jClass), que se basa solo en la composición.
+
+```{r}
+path_curtir = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.braycurtis.1.lt.ave.pcoa.loadings"
+
+brycurtisphylotipe <- read.delim(path_curtir)
+
+barplot(height = brycurtisphylotipe$loading, width =brycurtisphylotipe$axis,col = "skyblue",               
+  main = "Bar Plot de Ejemplo",  
+  xlab = "Categorías",           
+  ylab = "Valores"    )
+
+```
+
+### 5.3.Análisis de Variación y Asociación
+
+Para visualizar la variación entre muestras, se realizó un Análisis de Componentes Principales (PCoA) basado en las matrices de distancia obtenidas.
+
+Se evidencian diferencias claras entre los grupos, lo que indica que los tratamientas afectan de forma diferente a cada grupo, los grupos WT y KO muestran patrones distintos, lo que suguiere que los tratamientos influyen en microbiota de los ratones. La mayor separación ocurre entre WT_M y KO_F, lo que podría ser clave para entender diferencias de impacto entre los grupos.
+
+```{r}
+path_PCOA = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.braycurtis.1.lt.ave.pcoa.axes"
+PCOA_phylotipe<- read.delim(path_PCOA)
+
+PCOA_phylotipe_filter <- PCOA_phylotipe %>% left_join(target, by ="group")
+
+# Asegúrate de que la columna de tratamiento sea un factor
+PCOA_phylotipe_filter$treatment <- as.factor(PCOA_phylotipe_filter$treatment)
+
+# Crear el gráfico con colores según el grupo de tratamiento
+plot(PCOA_phylotipe_filter$axis1, PCOA_phylotipe_filter$axis2,
+     col = PCOA_phylotipe_filter$treatment,  # Colorear por tratamiento
+     pch = 19,  # Estilo de punto (puedes cambiarlo si quieres)
+     main = "PCoA - Ejes 1 y 2 por Tratamiento", 
+     xlab = "PCOA 1", 
+     ylab = "PCOA 2",
+     cex = 1.5)  # Tamaño de los puntos (ajústalo como prefieras)
+
+# Agregar una leyenda para los grupos de tratamiento
+legend("topright", legend = levels(PCOA_phylotipe_filter$treatment), 
+       col = 1:length(levels(PCOA_phylotipe_filter$treatment)), 
+       pch = 19, title = "Tratamiento")
+
+```
+
+Además, se aplicó la prueba AMOVA (Analysis of Molecular Variance) para evaluar si las diferencias entre los grupos definidos en el diseño experimental son estadísticamente significativas.
+
+```{r}
+Path_amova = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.braycurtis.1.lt.ave.amova"
+amova_data <- read.delim(Path_amova)
+
+```
+
+```{r}
+path_spearman = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.spearman.corr.axes"
+path_taxfilename = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.cons.taxonomy"
+data_spearman <- read.delim(path_spearman)
+taxfilename <- read.delim(path_taxfilename)
+
+taxfilename$genus<- gsub("([^;]+;){5}","",taxfilename$Taxonomy)
+
+```
+
+```{r}
+?filter
+corr_filter <- subset(data_spearman, p.value < 0.0005 | p.value.1 < 0.0005)
+
+
+corr_venom <- corr_filter %>% select(OTU,axis1,axis2) 
+corr_venom$axis1 <- corr_venom$axis1 * 0.45
+corr_venom$axis2 <- corr_venom$axis2 * 0.45
+
+corr_plot <- corr_venom %>% left_join(taxfilename,by ="OTU")
+corr_plot <- corr_plot %>% select(OTU,axis1,axis2,genus)
+
+
+plot(PCOA_phylotipe_filter$axis1, PCOA_phylotipe_filter$axis2,
+     col = PCOA_phylotipe_filter$treatment,  # Colorear por tratamiento
+     pch = 19,  # Estilo de punto (puedes cambiarlo si quieres)
+     main = "PCoA - Ejes 1 y 2 por Tratamiento", 
+     xlab = "PCOA 1", 
+     ylab = "PCOA 2",
+     cex = 1.5)  # Tamaño de los puntos (ajústalo como prefieras)
+
+# Agregar una leyenda para los grupos de tratamiento
+legend("topright", legend = levels(PCOA_phylotipe_filter$treatment), 
+       col = 1:length(levels(PCOA_phylotipe_filter$treatment)), 
+       pch = 19, title = "Tratamiento")
+
+# Agregar líneas horizontales y verticales
+abline(h = 0, v = 0, col = "gray", lty = 2)
+
+# Agregar las flechas
+arrows(0, 0, corr_plot$axis1, corr_plot$axis2, col = "red", length = 0.1, lwd = 2)
+
+# Agregar los nombres de los géneros en las puntas de las flechas
+text(corr_plot$axis1 * 1.1, corr_plot$axis2 * 1.1,  # Desplazar ligeramente los textos
+     labels = corr_plot$genus,                     # Etiquetas de los géneros
+     col = "red", cex = 0.8)
+
+```
+
+```{r}
+file_contents_filtered <- list("/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.1.KO_M-KO_F.lefse_summary",
+                               "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.1.WT_F-KO_F.lefse_summary",
+                               "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.1.WT_F-KO_M.lefse_summary",
+                               "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.1.WT_M-KO_F.lefse_summary",
+                               "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.1.WT_M-KO_M.lefse_summary",
+                               "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.subsample.1.WT_M-WT_F.lefse_summary")
+```
+
+```{r}
+# Iterar sobre todos los archivos en file_path_ifelse
+for (file in file_contents_filtered) {
+  # Leer el contenido de cada archivo con read.delim
+  file_content <- read.delim(file)
+  
+  # Asegurarse de que la columna 'LDA' es numérica
+  file_content$LDA <- as.numeric(file_content$LDA)
+  
+  # Asegurarse de que la columna 'Class' es carácter
+  file_content$Class <- as.character(file_content$Class)
+  
+  # Extraer el nombre del archivo sin la ruta completa
+  file_name <- basename(file)
+  
+  # Detectar las dos condiciones en el nombre del archivo
+  conditions <- str_extract_all(file_name, "WT_F|WT_M|KO_F|KO_M")[[1]]
+  
+  print(paste("Archivo procesado:", file_name))  # Ver qué archivo está en proceso
+  print(paste("Condiciones detectadas:", paste(conditions, collapse = ", ")))  # Revisar qué condiciones se extrajeron
+  
+  # Verificar que haya exactamente dos condiciones en el archivo
+  if (length(conditions) == 2) {
+    ref_condition <- conditions[1]  # Primera condición (de referencia, positiva)
+    neg_condition <- conditions[2]  # Segunda condición (se vuelve negativa)
+    
+    print(paste("Condición de referencia:", ref_condition))
+    print(paste("Condición negativa:", neg_condition))
+    
+    # Filtrar los datos con LDA > 2 y pValue < 0.05
+    filtered_content <- file_content %>%
+      filter(LDA > 2, pValue < 0.05) %>%
+      na.omit()  # Eliminar NA
+    
+    # Asignar LDAs: la segunda condición detectada se vuelve negativa
+    filtered_content <- filtered_content %>%
+      mutate(LDAs = ifelse(Class == neg_condition, -1 * LDA, LDA))
+    
+    # Almacenar el contenido filtrado en la lista
+    file_contents_filtered[[file]] <- filtered_content
+    
+    # Mostrar algunas filas para verificar
+    print(head(filtered_content))
+    
+  } else {
+    print(paste("Error: No se detectaron exactamente dos condiciones en", file_name))
+  }
+}
+  
+
+```
+
+### 5.4 Analisis de abundancia relativa.
+
+El gráfico muestra la abundancia relativa de diferentes géneros bacterianos en las muestras,cada barra representa una muestra individual, y la altura de cada segmento de la barra indica la proporción de ese género bacteriano en la muestra.
+
+```{r}
+grafs <- read.delim("/Users/angelaluquegarcia/Documents/metagenomica/META_16_MPTHUR_PHILOTYPE/final.tx.1.cons.tax.summary")
+grafs <- grafs[-1, ]
+grafs <- grafs[order(-grafs$total), ]
+grafs <- grafs %>% select(-total)  # Si usas dplyr
+grafs_25 <- head(grafs, 25)
+grafs_25 <- grafs_25 %>%
+  mutate(taxonomy = str_remove(word(taxonomy, 6, sep = ";"), "\\(\\d+\\)"))
+
+grafs_long <- grafs_25 %>%
+  pivot_longer(-taxonomy, names_to = "muestra", values_to = "valor")
+
+ggplot(grafs_long, aes(x = muestra, y = valor, fill = taxonomy)) +
+  geom_bar(stat = "identity") +  # Gráfico de barras apiladas
+  theme_minimal() +              # Tema limpio
+  labs(x = "Muestra", y = "Abundancia", fill = "Taxonomía") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotar etiquetas del eje X
+
+```
+
+Een el mapa de colores se muestra una variabilidad considerable en la composicion microniana entre las diferentes muestras inidicando que los tratamientos aplicados estan generando repuestas representativas.Evidenciamos que los generos taxonomicos mas representaticos son bacterioidetes, mostrando una alta abundancia den varias muestas, biofidobacterium y clostridia_UCG-014_ge que esta altamente representada en en las muestras DD y las odoribacter.
+
+```{r}
+ggplot(grafs_long, aes(x = muestra, y = taxonomy, fill = valor)) +
+  geom_tile() +  # Crea el heatmap
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +  # Colores de bajo a alto
+  theme_minimal() +
+  labs(x = "Muestra", y = "Taxonomía", fill = "Abundancia") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # Rotar etiquetas del eje X
+```
+
+```{r}
+path_target = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_SEQS/Targets.file.txt"
+targetsFile <- read.delim(path_target)
+as.factor(targetsFile$treatment)
+
+
+# Crear un diccionario que asocie cada muestra con su tratamiento
+muestra_a_tratamiento <- targetsFile %>% 
+  select(group, treatment) %>% 
+  deframe()  # Convierte a un named vector para fácil acceso
+grafs_long <- grafs %>%
+  pivot_longer(-taxonomy, names_to = "muestra", values_to = "valor") %>%
+  mutate(treatment = muestra_a_tratamiento[muestra])  # Asignar tratamientos
+grafs_summary <- grafs_long %>%
+  group_by(taxonomy, treatment) %>%
+  summarise(media_valor = mean(valor, na.rm = TRUE)) %>%
+  pivot_wider(names_from = treatment, values_from = media_valor)
+grafs_final <- left_join(grafs, grafs_summary, by = "taxonomy")
+
+
+
+grafs_final <- grafs_final %>%
+  mutate(suma_total = rowSums(select(., KO_F, KO_M, WT_F, WT_M), na.rm = TRUE))  # Sumar las columnas
+
+# Ordenar por la suma total de las últimas cuatro columnas
+grafs_final <- grafs_final %>%
+  arrange(desc(suma_total))  # Ordenar de mayor a menor
+grafs_final <- grafs_final %>% select(-suma_total)
+
+
+```
+
+```{r}
+
+grafs_long <- grafs_final %>%
+  mutate(taxonomy = str_remove(word(taxonomy, 6, sep = ";"), "\\(\\d+\\)"))
+grafs_long <- grafs_long %>%
+  pivot_longer(cols = c(KO_F, KO_M, WT_F, WT_M), 
+               names_to = "treatment", 
+               values_to = "valor")
+
+```
+
+En estas graficas podemos evidenciar diferencias entre grupos de tratamieto y los generos de los ratones dentro del tratamiento.
+
+Efecto del Tratamiento KO:
+
+Odoribacter: Se observa una abundancia notablemente mayor de Odoribacter en los grupos KO (tanto machos como hembras) en comparación con los grupos WT. Esto sugiere que el tratamiento KO está promoviendo el crecimiento de Odoribacter. Bifidobacterium: Se puede observar que hay una alta presencia en las muestras DD, esto puede indicar alguna particularidad en este grupo de muestras. Lactobacillus: Se observa una mayor abundancia en el grupo WT_F, lo que indica que este tratamiento en hembras favorece el crecimiento de este género.
+
+Diferencias por Sexo:
+
+Dentro del grupo KO: No se observan diferencias drásticas entre machos y hembras en la composición microbiana. Sin embargo, hay algunas variaciones sutiles en la abundancia de ciertos géneros. Dentro del grupo WT: Se observa una mayor abundancia de Lactobacillus en las hembras (WT_F) en comparación con los machos (WT_M). Esto sugiere que el sexo puede influir en la respuesta al tratamiento WT.
+
+```{r}
+grafs_long_30 <- grafs_long %>%
+  group_by(taxonomy) %>%
+  summarise(total_abundancia = sum(valor, na.rm = TRUE)) %>%
+  arrange(desc(total_abundancia)) %>%
+  slice_head(n = 30) %>%
+  select(taxonomy) %>%
+  inner_join(grafs_long, by = "taxonomy")
+
+
+ggplot(grafs_long_30, aes(x = treatment, y = valor, fill = taxonomy)) +
+  geom_bar(stat = "identity") +  # Barras apiladas
+  theme_minimal() +              # Estilo limpio
+  labs(x = "Tratamiento", y = "Abundancia", fill = "Taxonomía") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotar etiquetas del eje X
+
+```
+
+```{r}
+ggplot(grafs_long_30, aes(x = treatment, y = taxonomy, fill = valor)) +
+  geom_tile() +  # Crea el heatmap
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +  # Colores de bajo a alto
+  theme_minimal() +
+  labs(x = "Tratamiento", y = "Taxonomía", fill = "Abundancia") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotar etiquetas del eje X
+```
+
+# Analisis con MasLim:
+
+A continuación, se realizó un análisis de contraste utilizando MASLin, una herramienta bioinformática empleada en metagenómica para identificar asociaciones entre características microbianas y variables de interés en estudios de microbioma. En este estudio, MASLin se utilizó para detectar taxones y funciones microbianas que estuvieran significativamente relacionadas con los tratamientos suministrados a los ratones.
+
+Para este análisis, se utilizaron las bases de datos *Targets.file.txt* y *Design.file.txt*, archivos que contienen los metadatos de las muestras, como el grupo experimental o condición, y los contrastes diseñados para el análisis, junto con la base de datos *final.tx.1.cons.tax.summary*, resultante del análisis con mothur. Previo al análisis con MASLin, se llevó a cabo un filtrado de taxones según la abundancia (≥0.0001) y la presencia (≥40% de las muestras). Como resultado, se obtuvieron varias carpetas con la información de abundancia taxonómica por contraste. En este informe, el contraste a analizar será *KO_M vs KO_F*, por lo que examinaremos cómo afectó el tratamiento KO a los ratones machos y hembras.
+
+Una de las bases de datos resultantes, *all_results.tsv*, contiene toda la información necesaria para el análisis de abundancia del contraste seleccionado.
+
+```{r}
+
+path_volcano = ("/Users/angelaluquegarcia/Documents/metagenomica/META_16_MOTHUR_PHILOTYPE_MasLin/KO_M_vs_KO_F/all_results.tsv")
+vol_rest = read.delim(path_volcano)
+
+vol_rest <- vol_rest %>%
+  mutate(negLogQval = -log10(qval))
+head(vol_rest)
+
+```
+
+Para la visualización de lo datos resultantes se usó un vulcano plot que muestra la relación de los Log₂ Fold Change y la significancia de los taxones en el contraste KO_M vs KO_F.
+
+```{r}
+volcano_plot <- ggplot(vol_rest, aes(x = coef, y = negLogQval)) +
+  geom_point(aes(color = qval < 0.25 & abs(coef) > 1), size = 2, alpha = 0.6) +
+  scale_color_manual(values = c("TRUE" = "red", "FALSE" = "gray")) +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot",
+    x = expression(Log[2]~Fold~Change~(coef)),
+    y = expression(-Log[10]~Q-value),
+    color = "Significant"
+  ) +
+  geom_hline(yintercept = -log10(0.25), linetype = "dashed", color = "blue") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "blue") +
+  theme(
+    legend.position = "top",
+    text = element_text(size = 12)
+  )
+
+# Mostrar el gráfico
+print(volcano_plot)
+
+```
+
+También se realizó un análisis de barra horizontal para identificar los géneros más representativos en cada grupo, al ser KO_M la referencia, tendremos que las barras de color rojo serán los géneros más representativos en el contraste KO_M y las de color azul más intenso serán las más representativas en KO_F. Notamos que el género mas representativo para KO_M es *Bifidobacterium y Dubosiella* y en KO_F es *clostridiaceae*.
+
+```{r}
+# Filtrar los más significativos (qval < 0.03) y ordenar por coef
+volcan_filtrado <- vol_rest %>%
+  filter(qval < 0.25) %>%
+  arrange(desc(coef)) # Ordenar de mayor a menor
+
+# Crear gráfico de barras horizontales
+ggplot(volcan_filtrado, aes(x = reorder(feature, coef), y = coef, fill = coef)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  coord_flip() + # Hacer las barras horizontales
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Géneros ordenados por coef (logFC)", x = "Feature (género)", y = "logFC (coef)", fill = "logFC") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title = element_text(face = "bold"))
+
+```
+
+Por último para el análisis de masLim creamos un mapa de color que representara las muestras (eje x) y la abundancia de los taxones (eje y)
+
+```{r}
+path_heat_norm = "/Users/angelaluquegarcia/Documents/metagenomica/META_16_MOTHUR_PHILOTYPE_MasLin/KO_M_vs_KO_F/features/filtered_data_norm.tsv"
+data_norm <- read.delim( path_heat_norm, header = T, stringsAsFactors = F)
+
+transpuesta <- as.data.frame(t(data_norm))
+
+names(transpuesta) <- transpuesta[1, ]
+transpuesta <- transpuesta[-1, ]
+
+# Convertir transpuesta a un dataframe si es necesario
+transpuesta <- as.data.frame(transpuesta)
+
+# Ahora puedes usar mutate
+transpuesta <- transpuesta %>%
+  mutate(feature = rownames(transpuesta))
+
+dos_tablas <- merge(transpuesta,vol_rest, by="feature", all.x = TRUE)
+# Filtrar los resultados con qval < 0.05 y ordenar por qval de menor a mayor
+top_20_features <- dos_tablas %>%
+  filter(qval < 0.25)
+#  arrange(qval)  # Seleccionar las primeras 20 filas
+# Filtrar columnas que comienzan con "D"
+
+top_20_features <- top_20_features %>%
+  select(feature, starts_with("EWH"))
+# Configurar los nombres de las filas
+rownames(top_20_features) <- top_20_features$feature
+
+# Convertir el dataframe en matriz para pheatmap
+top_20_matrix <- top_20_features %>% select(-feature)
+
+top_20_matrix <- apply(top_20_matrix,2,as.numeric)
+
+
+# Generar el heatmap
+pheatmap(
+  top_20_matrix, 
+  scale = "row",                  # Escalar las filas para normalizar
+  cluster_cols =FALSE,
+  
+  clustering_distance_rows = "euclidean", # Distancia para las filas
+  clustering_distance_cols = "euclidean", # Distancia para las columnas
+  clustering_method = "complete",         # Método de clustering
+  show_rownames = TRUE,           # Mostrar nombres de las filas
+  show_colnames = TRUE            # Mostrar nombres de las columnas
+)
+
+```
+
+#Analisis con Picrust:
+
+PICRUSt (Phylogenetic Investigation of Communities by Reconstruction of Unobserved States) es una herramienta bioinformática que predice las funciones metabólicas de comunidades microbianas a partir de datos de secuenciación del gen 16S rRNA. En nuestro análisis, se implementó para inferir las composiciones funcionales de la microbiota analizada, utilizando bases de datos de referencia y modelos filogenéticos para predecir qué genes funcionales están presentes en las muestras.
+
+Este análisis nos ayuda a comparar los resultados de la expresión diferencial y evaluar si existe una correlación entre los cambios en la composición microbiana y las funciones metabólicas clave.
+
+Para la visualización de los datos resultantes, se generó un gráfico de volcán que muestra la relación entre el Log₂ Fold Change y la significancia de las rutas metabólicas encontradas en la comparación *KO_M vs KO_F*.
+
+```{r}
+path_volcano_picrst = ("/Users/angelaluquegarcia/Documents/metagenomica/META_16_MOTHUR_PHILOTYPE_PICRUST2/KO_M_vs_KO_F/all_results.tsv")
+vol_rest_picrust = read.delim(path_volcano_picrst)
+
+vol_rest_picrust <- vol_rest_picrust %>%
+  mutate(negLogQval = -log10(qval))
+
+volcano_plot_picrust <- ggplot(vol_rest_picrust, aes(x = coef, y = negLogQval)) +
+  geom_point(aes(color = qval < 0.25 & abs(coef) > 1), size = 2, alpha = 0.6) +
+  scale_color_manual(values = c("TRUE" = "red", "FALSE" = "gray")) +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot",
+    x = expression(Log[2]~Fold~Change~(coef)),
+    y = expression(-Log[10]~Q-value),
+    color = "Significant"
+  ) +
+  geom_hline(yintercept = -log10(0.25), linetype = "dashed", color = "blue") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "blue") +
+  theme(
+    legend.position = "top",
+    text = element_text(size = 12)
+  )
+
+# Mostrar el gráfico
+print(volcano_plot_picrust)
+
+```
+
+Por ultimo filtramos las rutas metabólicas más significativas quedándonos con aquellas cuyo qvalue fuera menos a 0,03 y se ordenaron de menor a mayor para hacer u diagrama de barras que representara las rutas metabólicas mas significaticas encoentradas en el contraste de KO_M vs KO_F.
+
+```{r}
+# Filtrar los más significativos (qval < 0.03) y ordenar por coef
+volcan_filtrado_picrust <- vol_rest_picrust %>%
+  filter(qval < 0.25) %>%
+  arrange(desc(coef)) # Ordenar de mayor a menor
+
+# Crear gráfico de barras horizontales
+ggplot(volcan_filtrado_picrust, aes(x = reorder(feature, coef), y = coef, fill = coef)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  coord_flip() + # Hacer las barras horizontales
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(title = "Géneros ordenados por coef (logFC)", x = "Feature (género)", y = "logFC (coef)", fill = "logFC") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title = element_text(face = "bold"))
+
+```
+
+# Discucion.
+
+Los análisis realizados revelaron una correlación significativa entre los cambios en la composición de la microbiota y las funciones metabólicas de los ratones.
+
+El análisis con MASLin mostró que los géneros Bifidobacterium y Dubosiella presentaron valores de Log₂ Fold Change (LogFC) positivos, lo que indica una mayor abundancia en el grupo de tratamiento KO_M. En contraste, Clostridium sensu stricto 1 y Faecalibaculum mostraron valores negativos, sugiriendo una abundancia significativamente mayor en el grupo KO_F.
+
+El análisis con PICRUSt evidenció que la ruta metabólica PWY.6876, correspondiente a la síntesis de poliaminas, junto con otras rutas relacionadas con la síntesis de aminoácidos, fueron significativamente enriquecidas en el grupo KO_F. Estos resultados sugieren cambios sustanciales en estas funciones metabólicas en este grupo experimental.
+
+# Conclucion.
+El presente estudio empleó inferencia funcional (Mothur, MASLiN, PICRUSt2) para caracterizar y comparar el perfil funcional de microbiotas asociadas a tratamientos KO y WT. Los análisis revelaron diferencias funcionales significativas entre los grupos, identificando taxones con roles funcionales distintivos. El análisis multivariado (PCoA) confirmó una clara separación funcional influenciada por el tratamiento KO tanto en machos como en hembras, con tendencias que sugieren un efecto a nivel de género. Notablemente, en las hembras, el tratamiento afectó las rutas metabólicas de PWY.6876, lo que indica una respuesta funcional diferencial por sexo al tratamiento.
+
+
+En conjunto, los resultados obtenidos demuestran que los tratamientos aplicados modulan de manera diferencial el potencial funcional de la microbiota, lo que sugiere implicaciones relevantes para comprender el papel del tratamiento aplicado en la función microbiana intestinal. Estos hallazgos resaltan la utilidad de la inferencia funcional como herramienta para generar hipótesis sobre el impacto genético en la capacidad metabólica microbiana.
+  
