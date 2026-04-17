@@ -1,0 +1,285 @@
+---
+title: "Modulo_B"
+author: "Angela Luque Garcia"
+date: "2025-11-11"
+output:
+  html_document:
+    df_print: paged
+---
+
+Librerias usadas para el anlisis:
+
+```{r}
+library(tidyverse)
+library(gprofiler2)
+
+library(dplyr)
+library(tidyr)
+library(readr)
+
+library(stringr)
+library(biomaRt)
+
+```
+
+## Modulo B.
+
+La tabla “NOT.txt” recoge información variada relativa al proteoma/transcriptoma identificado a partir de una muestra de un tejido desconocido. Esta información fue obtenida del repositorio
+
+```{r}
+path_not = "/Users/angelaluquegarcia/Downloads/NOT_anexosupuestosBIOINFO.txt"
+
+not_data <- read_delim(path_not, 
+                       delim = "\t",      
+                       quote = "\"", 
+                       escape_double = FALSE, 
+                       trim_ws = TRUE)
+#names(not_data)
+not_data
+
+```
+
+1- Genera una tabla de frecuencias que resuma el número total de proteínas identificadas en cada “clase de proteínas”. Una proteína puede ser considerada en varias clases de proteínas.
+
+Junto a la librería dplyr se selecciona la columna "protein class", que contiene la clasificación funcional de la proteína, sin embargo, un proteína puede tener diferentes clasificaciones que dentro de la base de datos están separadas por "," por lo que se debe tener en cuenta para poder hacer una tabla que contenga las clases de proteínas por separado y el número de proteínas que corresponde realmente a casa clasificacion.
+
+```{r}
+tabla_frecuencias <- not_data %>%
+  dplyr::select(`Protein class`) %>%                       
+  separate_rows(`Protein class`, sep = ",") %>%   
+  mutate(`Protein class` = trimws(`Protein class`)) %>% 
+  filter(!is.na(`Protein class`) & `Protein class` != "") %>%
+  group_by(`Protein class`) %>%
+  summarise(`Número de proteínas` = n()) %>%
+  arrange(desc(`Número de proteínas`))
+
+tabla_frecuencias
+```
+
+2.  Sobre la tabla original NOT.txt, filtra las proteínas localizadas principalmente en el citosol, tienen como función molecular ser enzimas del tipo “Serine/threonine-protein kinase” y a su vez que son consideradas kinasas codificadas por genes relacionados a enfermedades.
+
+```{r}
+sub_tabla <- not_data %>%
+  filter(
+    # Paso 1: Localización principal de porteinas localizadas en el cytosol
+    str_detect(`Subcellular main location`, regex("cytosol", ignore_case = TRUE)) &
+    
+    # Paso 2: Localizacion de  porteinas con Función molecular: serine/threonine-protein kinase
+    str_detect(`Molecular function`, regex("serine/threonine[- ]protein kinase", ignore_case = TRUE)) &
+    
+    # Paso 3. filtracion por implicación en enfermedad (no vacía ni 'None')
+    !is.na(`Disease involvement`) &
+    `Disease involvement` != "" &
+    !str_detect(`Disease involvement`, regex("None|unknown", ignore_case = TRUE))
+  )
+
+# Vista previa
+head(sub_tabla)
+```
+
+3.A partir de esta sub-tabla, filtra las columnas con información relativa a “identificador de proteína en formato Uniprot”, “cromosoma”, “procesosbiológicos” e “implicación en enfermedad”
+
+```{r}
+
+# Paso 1: Filtrara la tabla anterior por las columnas de Chromosome, Biological process y Disease involvement
+sub_tabla_filtrada <- sub_tabla %>%
+  dplyr::select(
+    Uniprot,
+    Chromosome,
+    `Biological process`,
+    `Disease involvement`
+  )
+
+# Mostrar las primeras filas
+head(sub_tabla_filtrada)
+```
+
+4.  Transforma el nombre de estas proteínas en formato GENE SYMBOL a partir de los identificadores de Uniprot.
+
+```{r}
+# Paso 1: descargar y llamar a la libreria biomaRt para conectarse al servidor de Ensembl
+
+ensembl <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Paso2: Obtener los símbolos de gen a partir de los IDs de Uniprot
+mapa_uniprot <- getBM(
+  attributes = c("uniprot_gn_id", "hgnc_symbol"),  
+  filters = "uniprot_gn_id",
+  values = sub_tabla_filtrada$Uniprot,
+  mart = ensembl
+)
+
+# Paso 3 Unir los resultados con la tabla original
+sub_tabla_genes <- merge(sub_tabla_filtrada, mapa_uniprot,
+                         by.x = "Uniprot", by.y = "uniprot_gn_id",
+                         all.x = TRUE)
+
+
+head(sub_tabla_genes)
+```
+
+5- Esta lista de proteínas, ¿a qué enfermedad se asocian más frecuentemente? ¿En qué funciones biológicas participan? ¿Sus genes codificantes, en qué cromosoma se encuentran más frecuentemente?
+
+```{r}
+# Paso 1: Seleccionar la columna de `Disease involvement` la cuel tiene varias enfermedades separadas por "," y mutarla para poder hacer un conteo por enfermedades individuales descritas guardando el resultado en otra columna con la frecuencia con la que parece cada enfermedad,
+
+enfermedades_frec <- sub_tabla_genes %>%
+  dplyr::select(`Disease involvement`) %>%
+  separate_rows(`Disease involvement`, sep = ",") %>%
+  mutate(`Disease involvement` = str_trim(`Disease involvement`)) %>%
+  filter(!is.na(`Disease involvement`) & `Disease involvement` != "" &
+           !str_detect(`Disease involvement`, regex("None|unknown", ignore_case = TRUE))) %>%
+  group_by(`Disease involvement`) %>%
+  summarise(Frecuencia = n()) %>%
+  arrange(desc(Frecuencia))
+
+head(enfermedades_frec, 10)   # ver las 10 enfermedades más frecuentes
+
+
+```
+
+```{r}
+# Paso 2: S e repite el mimo proceso pero filtrando la columna de cromosomas ignorando valores na y eliminando filas vacias, luego se agrupan segun el numero de cromosoma y se suman con la funcion se summarise  usando la funcion "=n" que cuenta el numero de filas (roteinas) en cada grupo (numero de genes)
+
+cromosomas_frec <- sub_tabla_genes %>%
+  filter(!is.na(Chromosome) & Chromosome != "") %>%
+  group_by(Chromosome) %>%
+  summarise(`Número de genes` = n()) %>%
+  arrange(desc(`Número de genes`))
+
+head(cromosomas_frec, 10)   # ver los 10 cromosomas con más genes
+```
+
+```{r}
+
+procesos_frec <- sub_tabla_genes %>%
+  dplyr::select(`Biological process`) %>%
+  separate_rows(`Biological process`, sep = ",") %>%
+  mutate(`Biological process` = str_trim(`Biological process`)) %>%
+  filter(!is.na(`Biological process`) & `Biological process` != "") %>%
+  group_by(`Biological process`) %>%
+  summarise(Frecuencia = n()) %>%
+  arrange(desc(Frecuencia))
+
+head(procesos_frec, 10)
+```
+
+6- ¿Analizando la tabla original NOT.txt, de qué tejido crees que provienela muestra?
+
+para tener mejor idea sobre la posible proveniencia del tejido propongo filtra la tabla teniendo en cuenta la columna "RNA tissue specificity" la cual describe el tejido del que proviene cada proteína y al igual que los anteriores análisis, hacer un conteo de cuenta proteínas corresponden a cada grupo, con el fin de deducir de qué tejido puede provenir la muestra.
+
+```{r}
+
+tissue_frec <- not_data %>%
+  dplyr::select(`RNA tissue specificity`) %>%
+  separate_rows(`RNA tissue specificity`, sep = ";|,") %>%
+  mutate(`RNA tissue specificity` = str_trim(`RNA tissue specificity`)) %>%
+  filter(!is.na(`RNA tissue specificity`) & `RNA tissue specificity` != "" &
+           !str_detect(`RNA tissue specificity`, regex("low", ignore_case = TRUE))) %>%
+  group_by(`RNA tissue specificity`) %>%
+  summarise(Proteínas = n()) %>%
+  arrange(desc(Proteínas))
+
+head(tissue_frec, 10)
+
+```
+
+El patrón de expresión muestra una mayoría de proteínas no específicas, relacionadas con transcripción nuclear y metabolismo mitocondrial, junto con clusters asociados a proliferación celular (testículo, médula ósea). Estos rasgos son característicos de tejidos con alta actividad metabolica, como hígado, médula ósea o cultivos celulares.
+
+```{r}
+
+cluster_freq <- table(not_data$`Tissue expression cluster`)
+
+
+cluster_freq_sorted <- sort(cluster_freq, decreasing = TRUE)
+
+
+head(cluster_freq_sorted, 10)
+
+```
+
+```{r}
+tabla_protein_class <- not_data %>%
+  dplyr::select(`Protein class`) %>%
+  separate_rows(`Protein class`, sep = ",") %>%
+  mutate(`Protein class` = str_trim(`Protein class`)) %>%
+  group_by(`Protein class`) %>%
+  summarise(Proteínas = n()) %>%
+  arrange(desc(Proteínas))
+
+tabla_protein_class
+
+```
+
+# Modulo D.
+
+```{r}
+path_data = "/Users/angelaluquegarcia/Downloads/table.tsv"
+
+data_D <- read_tsv(path_data)
+
+data_D <- data_D %>%
+  mutate(
+    `p-Value` = as.numeric(`p-Value`),
+    `q-Value` = as.numeric(`q-Value`)
+  )
+
+data_D
+```
+
+```{r}
+data_D_filt <- data_D %>%
+  filter(`q-Value` < 0.05,
+         `Higher expression in` == "(A) BRCA_Her2")
+data_D_filt
+
+```
+
+```{r}
+write.table(
+  data_D_filt$Gene,
+  file = "genes_HER2_overexpressed.txt",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+```
+
+```{r}
+genes <- unique(data_D_filt$Gene)
+
+gostres <- gost(
+  query = genes,
+  organism = "hsapiens",
+  sources = c("GO:MF"),        # Solo Molecular Function
+  user_threshold = 0.05,
+  correction_method = "gSCS",  # Corrección g:SCS (por defecto)
+  domain_scope = "annotated"
+)
+
+```
+
+```{r}
+go_mf <- gostres$result %>%
+  filter(source == "GO:MF", p_value < 0.05) %>%
+  arrange(p_value)
+go_mf
+```
+
+```{r}
+
+top15 <- go_mf %>% slice_min(order_by = p_value, n = 15)
+
+ggplot(top15, aes(x = -log10(p_value),
+                  y = reorder(term_name, -log10(p_value)),
+                  size = intersection_size)) +
+  geom_point(color = "steelblue") +
+  labs(
+    x = "-log10(p-value)",
+    y = "GO:MF term",
+    size = "Genes in term",
+    title = "Términos GO:MF enriquecidos (HER2 sobreexpresado)"
+  ) +
+  theme_minimal()
+
+```
